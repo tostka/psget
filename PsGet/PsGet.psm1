@@ -3,6 +3,10 @@
     PowerShell module installation stuff.
     URL: https://github.com/psget/psget
     Based on http://poshcode.org/1875 Install-Module by Joel Bennett
+    # 3:55 PM 4/21/2022 TK: add nupkg support:
+      - use -ModulePath to psrepository.SourceLocation .nupkg, 
+      - then detect ext & ren .nupkg to .zip, & update $ModulePath to point to the renamed zip. 
+      - Works from that point - goal was to get this quickly extended to permit Psv2 support of local PsRepositores. Does that, shouth Psv2 has a raft of psd content failures even if you get mods to install
 #>
 #requires -Version 2.0
 
@@ -29,6 +33,8 @@ Write-Debug 'Set up needed constants.'
 Set-Variable -Name PSGET_ZIP -Value 'ZIP' -Option Constant -Scope Script
 Set-Variable -Name PSGET_PSM1 -Value 'PSM1' -Option Constant -Scope Script
 Set-Variable -Name PSGET_PSD1 -Value 'PSD1' -Option Constant -Scope Script
+# 3:55 PM 4/21/2022 TK: add nupkg support 
+Set-Variable -Name PSGET_NUPKG -Value 'NUPKG' -Option Constant -Scope Script
 
 #endregion
 
@@ -945,7 +951,12 @@ function Install-ModuleFromLocal {
                 $Type = if ($Type) { $Type } else { $PSGET_PSM1 }
             } elseif ($extension -eq '.zip') {
                 $Type = if ($Type) { $Type } else { $PSGET_ZIP }
+            } elseif ($extension -eq '.nupkg') {
+                # cut in # PSGET_NUPKG .nupkg support (just ren to .zip)
+                $ModulePath = copy-item -path $ModulePath -dest (join-path -path $newModulePath -childpath (split-path $ModulePath -leaf).replace('.nupkg','.zip')) -passthru; 
+                $Type = if ($Type) { $Type } else { $PSGET_ZIP }
             }
+            
 
             if ($Type -eq $PSGET_ZIP) {
                 Expand-ZipModule $ModulePath $newModulePath
