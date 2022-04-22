@@ -3,10 +3,8 @@
     PowerShell module installation stuff.
     URL: https://github.com/psget/psget
     Based on http://poshcode.org/1875 Install-Module by Joel Bennett
-    # 3:55 PM 4/21/2022 TK: add nupkg support:
-      - use -ModulePath to psrepository.SourceLocation .nupkg, 
-      - then detect ext & ren .nupkg to .zip, & update $ModulePath to point to the renamed zip. 
-      - Works from that point - goal was to get this quickly extended to permit Psv2 support of local PsRepositores. Does that, shouth Psv2 has a raft of psd content failures even if you get mods to install
+    # 3:55 PM 4/21/2022 TK: add nupkg support (use -ModulePath to psrepository.SourceLocation .nupkg, then detect ext & ren .nupkg to .zip, and update $ModulePath to point to the renamed zip. 
+    Works from that point - goal was to get this quickly extended to permit Psv2 support of local PsRepositores.
 #>
 #requires -Version 2.0
 
@@ -21,8 +19,21 @@ else {
     $global:UserModuleBasePath = Join-Path -Path $env:ProgramFiles -ChildPath 'WindowsPowerShell\Modules'
 }
 
-# NOTE: Path changed to align with current MS conventions
-$global:CommonGlobalModuleBasePath = Join-Path -Path $env:ProgramFiles -ChildPath 'WindowsPowerShell\Modules'
+<# 10:06 AM 4/22/2022 TK: Re: below, and Global vs AllUsers profiles: 
+-*actually* Psv2 didn't support an AllUsers profile: "$env:ProgramFiles\WindowsPowershell\Modules"
+-forcing the above into place, and patching PsModulePath to include the new dir, doesn't accurately 
+reproduce the Psv2-era proper results: 
+Without an 'AllUsers' profile, the only/expected Psv2 option was the 'System' profile. 
+Psv2 non-CurrentUser installs should properly be to "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
+Forcing creation of the psv3+ AllUsers profile in Psv2 enviro, could be confusing, as no other Psv2-era/compliant modules will *ever* install content there.
+#>
+# 10:14 AM 4/22/2022 TK:So, I'm restoring historical Psv2 global/system profile installs:
+if($host.version.major -lt 3){
+    $global:CommonGlobalModuleBasePath = Join-Path -Path $env:SystemRoot -ChildPath '\System32\WindowsPowerShell\v1.0\Modules'
+} else { 
+    # NOTE: Path changed to align with current MS conventions
+    $global:CommonGlobalModuleBasePath = Join-Path -Path $env:ProgramFiles -ChildPath 'WindowsPowerShell\Modules'
+} ; 
 
 if (-not (Test-Path -Path:variable:global:PsGetDirectoryUrl)) {
     $global:PsGetDirectoryUrl = 'https://github.com/psget/psget/raw/master/Directory.xml'
@@ -329,7 +340,7 @@ function Install-Module {
 <#
     .SYNOPSIS
         Updates a module.
-
+    
     .DESCRIPTION
         Supports updating modules for the current user or all users (if elevated).
 
@@ -346,7 +357,7 @@ function Install-Module {
         When ModuleHash is specified the chosen module will only be installed if its contents match the provided hash.
 
     .PARAMETER Global
-        If set, attempts to install the module to the all users location in Windows\System32...
+        If set, attempts to install the module to the all users location in 'Program Files' (or Windows\System32... under PsV2)
 
     .PARAMETER DoNotImport
         Indicates that command should not import module after installation.
@@ -836,10 +847,33 @@ function Install-ModuleFromWeb {
     }
 }
 
-<#
+function Install-ModuleFromLocal {
+    <#
     .SYNOPSIS
         Install a module from a provided local path.
 
+        .NOTES
+        Version     : 0.0.0
+        Author      : Todd Kadrie
+        Website     : http://www.toddomation.com
+        Twitter     : @tostka / http://twitter.com/tostka
+        CreatedDate : 2022-04-22
+        FileName    : 
+        License     : (None Asserted)
+        Copyright   : (None Asserted)
+        Github      : https://github.com/tostka/psget
+        Tags        : Powershell,Module,Maintenance
+        AddedCredit : Mykhailo Chalyi (Mike Chaliy)
+        AddedWebsite: https://github.com/chaliy
+        AddedTwitter: @chaliy
+        REVISIONS
+        * 10:35 AM 4/22/2022 revs to my forked version of Mykhailo Chalyi's psGet:
+         -  minor tweaks to accomodate .nupkg (including routine non-PS-related file removals)
+            (Psv2 lacks PowershellGet support, and I want to leverage a local PSRepository with PsGet)
+         - shifted Psv2-era System profile option back into place.
+         - moved this CBH block inside the function (personal sytax pref ;P), and added detailed .NOTES block
+        * 12/11/2021 @chaliy's last posted rev/update
+        
     .PARAMETER ModulePath
         Local path to the module to install.
 
@@ -882,8 +916,7 @@ function Install-ModuleFromWeb {
     .PARAMETER PostInstallHook
         Defines the name of a script inside the installed module folder which should be executed after installation.
         Default: 'Install.ps1'
-#>
-function Install-ModuleFromLocal {
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Position=0, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true, Mandatory=$true)]
@@ -952,14 +985,39 @@ function Install-ModuleFromLocal {
             } elseif ($extension -eq '.zip') {
                 $Type = if ($Type) { $Type } else { $PSGET_ZIP }
             } elseif ($extension -eq '.nupkg') {
-                # cut in # PSGET_NUPKG .nupkg support (just ren to .zip)
-                $ModulePath = copy-item -path $ModulePath -dest (join-path -path $newModulePath -childpath (split-path $ModulePath -leaf).replace('.nupkg','.zip')) -passthru; 
+                # 8:54 AM 4/22/2022 TK: cut in # PSGET_NUPKG .nupkg support (just ren .nupkg to .zip, and existing code accomodates fine)
+                # use a new temp dir for the local-buffered .zip vers
+                $bufferedZipFolderPath = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+                New-Item $bufferedZipFolderPath -ItemType Directory | Out-Null
+                Write-Debug "Temporary work directory created: $bufferedZipFolderPath"
+                trap { Remove-Item -Path $bufferedZipFolderPath -Recurse -Force ; break }
+                $newZipPath = Join-Path -Path $bufferedZipFolderPath -ChildPath 'module'
+                New-Item $newZipPath -ItemType Directory | Out-Null                
+                
+                $ModulePath = copy-item -path $ModulePath -destination (join-path -path $newZipPath -childpath (split-path $ModulePath -leaf).replace('.nupkg','.zip')) -passthru; 
                 $Type = if ($Type) { $Type } else { $PSGET_ZIP }
             }
             
 
             if ($Type -eq $PSGET_ZIP) {
                 Expand-ZipModule $ModulePath $newModulePath
+                <# 8:54 AM 4/22/2022 TK: cut in # PSGET_NUPKG .nupkg support: 
+                    Purge out MS nupkg-only content: https:/docs.microsoft.com/en-us/powershell/scripting/gallery/how-to/working-with-packages/manual-download?view=powershell-7.2#installing-powershell-modules-from-a-nuget-package](https://docs.microsoft.com/en-us/powershell/scripting/gallery/how-to/working-with-packages/manual-download?view=powershell-7.2#installing-powershell-modules-from-a-nuget-package)
+                #>
+                if ($extension -eq '.nupkg') {
+                    # remove the local zip copy of the .nupkg
+                    Remove-Item -Path $bufferedZipFolderPath -Recurse -Force ;
+                    $dtargets = @() ;
+                    $modfiles = get-childitem $newModulePath -recur ; 
+                    write-host "Collecting deletable stock items in all .nupkg files..." ;
+                    $dtargets = $modfiles  |where-object{$_.name -match '^(_rels|package|\[Content_Types]\.xml|.*\.nuspec)$'} | select -expand fullname ;
+                    write-verbose "(also collecting my custom pkg items - prior psm|d1 file versions)..."
+                    $dtargets += $modfiles  |where-object{$_.name -match '.*_TMP$'} | select -expand fullname ; 
+                    # cull date-stamp-renamed archived psm|d1 files caught up in the pkg build
+                    $dtargets += $modfiles  |where-object{$_.name -match '.*_\d{8}-\d{4}(A|P)M$'} | select -expand fullname ; 
+                    write-host "remove-item:`n$(($dtargets|out-string).trim())" ; 
+                    $dtargets | foreach-object {remove-item -LiteralPath $_ -recurse } ; 
+                } ; 
             }
             else {
                 Copy-Item -Path $ModulePath -Destination $newModulePath
@@ -1491,61 +1549,85 @@ function Invoke-DownloadModuleFromWeb {
     }
 }
 
-<#
-    .SYNOPSIS
-        Install the provided module into the defined destination.
 
-    .DESCRIPTION
-        Install the module inside of the provided directory into the defined destination
-        and perform the following steps:
-
-        * Rename module if requestes by provided InstallWithModuleName
-        * If a ModuleHash is provided, check if it matches.
-        * Add the destination path to the PSModulePath if necessary (depends on provided parameters)
-        * Place the conventions-matching module folder in the destination folder
-        * Import the module if necessary
-        * Add the profile import to profile if necessary
-
-    .PARAMETER ModuleName
-        The name of the module.
-
-    .PARAMETER InstallWithModuleName
-        The name the module should get.
-
-    .PARAMETER ModuleFolderPath
-        The path to the module data, which contains the module main file, named according to ModuleName
-
-    .PARAMETER TempFolderPath
-        TempPath used by PsGet for doing the work. Contains the ModuleFolderPath and will be deleted after processing,
-
-    .PARAMETER Destination
-        Path to which the module will be installed.
-
-    .PARAMETER ModuleHash
-        When ModuleHash is specified the chosen module will only be installed if its contents match the provided hash.
-
-    .PARAMETER Global
-        Influence the PSModulePath changes and profile changes.
-
-    .PARAMETER PersistEnvironment
-        Defines if the PSModulePath changes should be persistent.
-
-    .PARAMETER DoNotImport
-        Defines if the installed module should be imported.
-
-    .PARAMETER AddToProfile
-        Defines if an 'Import-Module' statement should be added to the profile.
-
-    .PARAMETER Update
-        Defines if an already existing folder in the target may be deleted for installation of the module.
-
-    .PARAMETER DoNotPostInstall
-        If defined, the PostInstallHook is not executed.
-
-    .PARAMETER PostInstallHook
-        Defines the name of a script inside the installed module folder which should be executed after installation.
-#>
 function Install-ModuleToDestination {
+    <#
+        .SYNOPSIS
+            Install the provided module into the defined destination.
+        
+        .NOTES
+            Version     : 0.0.0
+            Author      : Todd Kadrie
+            Website     : http://www.toddomation.com
+            Twitter     : @tostka / http://twitter.com/tostka
+            CreatedDate : 2022-
+            FileName    : VERB-NOUN.ps1
+            License     : (None Asserted)
+            Copyright   : (None Asserted)
+            Github      : https://github.com/tostka/psget
+            Tags        : Powershell,Module,Maintenance
+            AddedCredit : Mykhailo Chalyi (Mike Chaliy)
+            AddedWebsite: https://github.com/chaliy
+            AddedTwitter: @chaliy
+            REVISIONS
+            * 3:54 PM 4/22/2022 revs to my forked psGet:
+             -  to accomodate .nupkg (including routine non-PS-related file removals);
+             - moved CBH block inside the function (personal sytax pref ;P)
+             - implemented simple Psv2-compatibility .psd1 Manifest fix - pretest (test-modulemanifest), and on error with 
+                Remove the members that are not valid ('RootModule')
+                rem out the RootModule = xxx line in the psd1; then re test-modulemanifest for low-worthiness.
+            * 12/11/2021 @chaliy's last posted rev/update
+            
+        .DESCRIPTION
+            Install the module inside of the provided directory into the defined destination
+            and perform the following steps:
+
+            * Rename module if requestes by provided InstallWithModuleName
+            * If a ModuleHash is provided, check if it matches.
+            * Add the destination path to the PSModulePath if necessary (depends on provided parameters)
+            * Place the conventions-matching module folder in the destination folder
+            * Import the module if necessary
+            * Add the profile import to profile if necessary
+
+        .PARAMETER ModuleName
+            The name of the module.
+
+        .PARAMETER InstallWithModuleName
+            The name the module should get.
+
+        .PARAMETER ModuleFolderPath
+            The path to the module data, which contains the module main file, named according to ModuleName
+
+        .PARAMETER TempFolderPath
+            TempPath used by PsGet for doing the work. Contains the ModuleFolderPath and will be deleted after processing,
+
+        .PARAMETER Destination
+            Path to which the module will be installed.
+
+        .PARAMETER ModuleHash
+            When ModuleHash is specified the chosen module will only be installed if its contents match the provided hash.
+
+        .PARAMETER Global
+            Influence the PSModulePath changes and profile changes.
+
+        .PARAMETER PersistEnvironment
+            Defines if the PSModulePath changes should be persistent.
+
+        .PARAMETER DoNotImport
+            Defines if the installed module should be imported.
+
+        .PARAMETER AddToProfile
+            Defines if an 'Import-Module' statement should be added to the profile.
+
+        .PARAMETER Update
+            Defines if an already existing folder in the target may be deleted for installation of the module.
+
+        .PARAMETER DoNotPostInstall
+            If defined, the PostInstallHook is not executed.
+
+        .PARAMETER PostInstallHook
+            Defines the name of a script inside the installed module folder which should be executed after installation.
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -1673,6 +1755,41 @@ function Install-ModuleToDestination {
             Write-Host "Module $InstallWithModuleName was successfully installed." -Foreground Green
         }
 
+        <# 12:17 PM 4/22/2022 TK: cut in some Psv2 backward compatibility tests: later PS versions support the Psd1:RootModule spec, 
+            but Psv2 does not, and will not import-module, nor pass a Test-ModuleManfiest
+            Simple fix: rem out the offending property in the Psd1, if it fails t
+        #>
+        if($psd = (get-childitem "$(join-path -path $targetFolderPath -childpath $InstallWithModuleName).psd1").fullname){
+            try {$PsdTest = test-modulemanifest -path $psd -ea STOP -errorvariable ManifestFail } catch {
+                    write-warning "test-modulemanifest logged an error"
+            } ;           
+            if( ($host.version.major -eq 2) -AND ($manifestFail -match "the\smembers\sthat\sare\snot\svalid\s\('RootModule'\)") ){
+                # Psv2 doesn't like RootModule, rem it
+                $smsg = "Test-ModuleManifest: FAIL:"
+                $smsg += "`nPS version 2 detected, and $(split-path $psd -leaf) includes modern, *incompatible* 'RootModule' property" ; 
+                $smsg += "`nwhich needs to be commented-out to permit the module to import-module properly under Psv2..." ; 
+                $smsg += "`n(making that change now)" ; 
+                write-warning $smsg ; 
+                $rgxPurge = "(RootModule\s+=\s+'.*\.psm1')"
+                #"RootModule\s+=\s+'.*\.psm1''" ; 
+                # RootModule = 'verb-IO.psm1'
+                # we'd normally pretest the encoding, but until verb-io is installed, and a get-Fileencoding() is avail, we'll just force UTF8 to be safe.
+                $pltSetCon=@{ Path=$psd ; encoding = 'UTF8'; } ; 
+                if($psd1ExpMatch = Get-ChildItem $psd | select-string -Pattern $rgxPurge ){
+                    (Get-Content $psd) | Foreach-Object {
+                        $_ -replace $rgxPurge, ("#"+'$1') 
+                    } | Set-Content @pltSetCon ;
+                    write-host "Restesting updated .psd1..."
+                    try {$PsdTest = test-modulemanifest -path $psd -ea STOP -errorvariable ManifestFail } catch {
+                        $smsg = "FATAL: test-modulemanifest continues to throw an error!"
+                        write-warning $smsg ;
+                        throw $smsg ; 
+                    } ;        
+                } ; 
+            } ; 
+        } ; 
+        
+        
         if (-not $DoNotImport) {
             Import-ModuleGlobally -ModuleName:$InstallWithModuleName -ModuleBase:$targetFolderPath -Force:$Update
         }
