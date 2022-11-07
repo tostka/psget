@@ -1,4 +1,4 @@
-#Set-StrictMode -Version Latest
+﻿#Set-StrictMode -Version Latest
 $here = (Split-Path -parent $MyInvocation.MyCommand.Definition)
 Import-Module ($here + '\PsGet\PsGet.psm1') -Force
 $verbose = $false;

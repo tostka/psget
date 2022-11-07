@@ -1,4 +1,4 @@
-
+﻿
 param (
   $url = "https://github.com/psget/psget/raw/master/PsGet/PsGet.psm1"
 )
