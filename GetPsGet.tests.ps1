@@ -1,21 +1,23 @@
-﻿if(-not $pester) {
-    Write-Warning 'The tests for GetPsGet should be executed using the Run-Tests.ps1 script or Invoke-AllTests.cmd batch script'
-    exit -1;
+﻿BeforeAll {
+    if(-not $pester) {
+        Write-Warning 'The tests for GetPsGet should be executed using the Run-Tests.ps1 script or Invoke-AllTests.cmd batch script'
+        exit -1;
+    }
+
+    $here = (Split-Path -parent $MyInvocation.MyCommand.Definition)
+    . "$here\HelperFunctionsForTesting.ps1"
+
+    function Get-GetPsGet {
+        Get-Content -Path $here\GetPsGet.ps1 | Out-String
+    }
+
+    # backup current PSModulePath before testing
+    $OriginalPSModulePath = $env:PSModulePath
+
+
+    # default PSModulePath is '{userpath};{systempath}'
+    $DefaultUserPSModulePath = Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath WindowsPowerShell\Modules
 }
-
-$here = (Split-Path -parent $MyInvocation.MyCommand.Definition)
-. "$here\HelperFunctionsForTesting.ps1"
-
-function Get-GetPsGet {
-    Get-Content -Path $here\GetPsGet.ps1 | Out-String
-}
-
-# backup current PSModulePath before testing
-$OriginalPSModulePath = $env:PSModulePath
-
-
-# default PSModulePath is '{userpath};{systempath}'
-$DefaultUserPSModulePath = Join-Path -Path ([Environment]::GetFolderPath('MyDocuments')) -ChildPath WindowsPowerShell\Modules
 
 Describe 'GetPsGet.ps1 installs the PsGet module' {
     Context 'Installation target can be configured by environment variable ''$PsGetDestinationModulePath''' {
@@ -28,11 +30,11 @@ Describe 'GetPsGet.ps1 installs the PsGet module' {
 
         Get-GetPsGet | Invoke-Expression
         It 'installs PsGet to target path' {
-            Test-Path -Path $expectedPath\PsGet.psm1 | Should Be $true
+            Test-Path -Path $expectedPath\PsGet.psm1 | Should -Be $true
         }
 
         It 'imports the module from target path' {
-            (Get-Command Install-Module).Module.ModuleBase | Should Be $expectedPath
+            (Get-Command Install-Module).Module.ModuleBase | Should -Be $expectedPath
         }
 
         Remove-Variable -Name PsGetDestinationModulePath
@@ -52,11 +54,11 @@ Describe 'GetPsGet.ps1 installs the PsGet module' {
 
         Get-GetPsGet | Invoke-Expression
         It 'installs PsGet to first path in PSModulePath' {
-            Test-Path -Path $expectedPath\PsGet.psm1 | Should Be $true
+            Test-Path -Path $expectedPath\PsGet.psm1 | Should -Be $true
         }
 
         It 'imports the module from that path' {
-            (Get-Command Install-Module).Module.ModuleBase | Should Be $expectedPath
+            (Get-Command Install-Module).Module.ModuleBase | Should -Be $expectedPath
         }
 
         $env:PSModulePath = $OriginalPSModulePath
@@ -74,11 +76,11 @@ Describe 'GetPsGet.ps1 installs the PsGet module' {
 
         Get-GetPsGet | Invoke-Expression
         It 'installs PsGet to first path in PSModulePath' {
-            Test-Path -Path $expectedPath\PsGet.psm1 | Should Be $true
+            Test-Path -Path $expectedPath\PsGet.psm1 | Should -Be $true
         }
 
         It 'imports the module from that path' {
-            (Get-Command Install-Module).Module.ModuleBase | Should Be $expectedPath
+            (Get-Command Install-Module).Module.ModuleBase | Should -Be $expectedPath
         }
 
         $env:PSModulePath = $OriginalPSModulePath
@@ -103,11 +105,11 @@ Describe 'GetPsGet.ps1 installs the PsGet module' {
             } -args @(Get-GetPsGet; $PsGetDestinationModulePath)
 
         It 'Should support ErrorActionPreference = ''Stop'' and Set-StrictMode Latest' {
-            -not $? | Should be $false
+            -not $? | Should -be $false
         }
 
         It 'installs PsGet to target path' {
-            Test-Path -Path $expectedPath\PsGet.psm1 | Should Be $true
+            Test-Path -Path $expectedPath\PsGet.psm1 | Should -Be $true
         }
 
         Remove-Variable -Name PsGetDestinationModulePath
